@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
     "db:schema": "psql \"$DATABASE_URL\" -f src/lib/schema.sql",
-    "check:key": "node scripts/check-signing-key.ts"
+    "check:key": "node scripts/check-signing-key.ts",
+    "check:env": "node scripts/check-env.ts"
   },
   "dependencies": {
     "@google-cloud/kms": "^4.5.0",
