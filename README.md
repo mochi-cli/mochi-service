@@ -159,6 +159,14 @@ rather than to the size of the customer table, corrects the record at the one
 moment the answer is used, and is not a scheduled job that can quietly stop
 running while everyone goes on believing there is a safety net.
 
+The one webhook a re-read cannot stand in for is the first, because a re-read
+needs a row to re-read: if `subscription.created` is lost there is nothing to
+refresh and the purchase is never noticed. That is also the only lost webhook
+that costs somebody money. So a read that finds no subscription asks Polar
+whether one exists, by the external customer id checkout already set. It is an
+extra call for accounts that have never paid, which is the right way round —
+paid by free accounts so that paying ones are never missed.
+
 Someone who lapses and never opens the app again needs nothing done: their claim
 expires and they fall back to Free. The bounded worst case is one claim lifetime
 of unpaid Pro — the same window the offline grace period hands out deliberately

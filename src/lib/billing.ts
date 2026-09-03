@@ -76,6 +76,42 @@ export async function syncSubscription(
 }
 
 /**
+ * Asks Polar whether this customer has a subscription we have never recorded.
+ *
+ * Reconcile-on-read was described as the whole safety net for a webhook that
+ * never arrived, and for every webhook but one it is. It was not the net for
+ * the *first* — a re-read needs a row to re-read, and if `subscription.created`
+ * is lost there is no row, so the purchase is never noticed at all. That is the
+ * one webhook whose loss actually costs somebody money: they paid, the app says
+ * Free, and nothing in the system would ever have corrected it.
+ *
+ * Asking by `externalCustomerId` works because checkout hands Polar the account
+ * id, so this lookup needs nothing we would have had to store.
+ *
+ * The cost is one extra call per read for people who have no subscription. That
+ * is the right way round: it is paid by free accounts, to make sure paying ones
+ * are never missed.
+ */
+async function discoverSubscription(accountId: string): Promise<Subscription | null> {
+  try {
+    const found = await polar().subscriptions.list({
+      externalCustomerId: accountId,
+      active: true,
+      limit: 1,
+    });
+    const subscription = found.result.items[0];
+    if (!subscription) return null;
+    await syncSubscription(accountId, subscription);
+    return await subscriptionFor(accountId);
+  } catch (error) {
+    // Unreachable Polar means "no subscription we know of", which is Free —
+    // the same fail-safe every other path here takes.
+    console.error('[service] could not look up a subscription for', accountId, error);
+    return null;
+  }
+}
+
+/**
  * The subscription, re-read from Polar if what we have is stale.
  *
  * This is the entire safety net for a webhook that never arrived, and it
@@ -90,7 +126,7 @@ export async function syncSubscription(
  */
 export async function currentSubscription(accountId: string): Promise<Subscription | null> {
   const cached = await subscriptionFor(accountId);
-  if (!cached) return null;
+  if (!cached) return await discoverSubscription(accountId);
 
   const age = Date.now() - Date.parse(cached.syncedAt);
   if (Number.isFinite(age) && age < RECONCILE_AFTER_MS) return cached;
