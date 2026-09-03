@@ -8,8 +8,24 @@
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is not set — see .env.example`);
+  if (!value) throw new Error(`${name} is not set — ${where()}`);
   return value;
+}
+
+/**
+ * Where to go and set it.
+ *
+ * Pointing at `.env.example` is useless on a deployed instance, where no such
+ * file exists — and the deployed case has an extra step that is the actual
+ * cause most of the time: variables added in a dashboard do not reach a
+ * deployment that is already running. Saying so in the error saves the round
+ * trip of setting it correctly and seeing the same message again.
+ */
+function where(): string {
+  return process.env.VERCEL
+    ? 'add it under Settings → Environment Variables (tick Production), then redeploy — ' +
+        'a running deployment does not pick up new variables on its own'
+    : 'see .env.example';
 }
 
 function optional(name: string): string | undefined {
