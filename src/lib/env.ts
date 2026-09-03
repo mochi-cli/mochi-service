@@ -84,9 +84,32 @@ export const env = {
     };
   },
 
-  /** How long a claim is believed. Days, not hours — see the README. */
+  /**
+   * How long a claim is believed. Days, not hours — see the README.
+   *
+   * Checked rather than trusted, because both ways of getting it wrong are
+   * nasty. A non-numeric value makes `new Date(NaN).toISOString()` throw, at
+   * signing time, in production, on the request of somebody who has just paid.
+   * A zero or negative one is worse: every claim is born already expired, so
+   * every customer is silently Free and it looks exactly like a working free
+   * tier. The upper bound is there because a fat-fingered 3650 is far likelier
+   * than a deliberate ten years, and this number is how long a cancelled
+   * subscription keeps working.
+   */
   get claimLifetimeDays() {
-    return Number(optional('CLAIM_LIFETIME_DAYS') ?? 7);
+    const raw = optional('CLAIM_LIFETIME_DAYS');
+    if (raw === undefined) return 7;
+    const days = Number(raw);
+    if (!Number.isFinite(days) || days <= 0) {
+      throw new Error(`CLAIM_LIFETIME_DAYS must be a positive number of days, not "${raw}"`);
+    }
+    if (days > 90) {
+      throw new Error(
+        `CLAIM_LIFETIME_DAYS of ${days} is longer than any grace period should be — ` +
+          'it is also how long a cancelled subscription keeps Pro'
+      );
+    }
+    return days;
   },
 
   get isProduction() {

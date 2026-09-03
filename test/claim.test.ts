@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
 import test, { describe } from 'node:test';
+import { env } from '../src/lib/env.ts';
 
 /**
  * The one test that has to hold: a claim signed here must verify in Mochi
@@ -115,5 +116,52 @@ describe('the claim this service signs', () => {
     ]);
     assert.ok(['free', 'pro'].includes(back.plan), 'there is no third plan');
     assert.ok(Date.parse(back.expiresAt) > 0, 'expiresAt is a real instant');
+  });
+});
+
+describe('how long a claim is believed', () => {
+  /**
+   * This value is read straight into arithmetic on a Date, and both ways of
+   * getting it wrong are quiet or badly timed. Pinning the refusals here means
+   * a bad deploy fails at boot rather than at somebody's checkout.
+   */
+  function withLifetime<T>(value: string | undefined, run: () => T): T {
+    const before = process.env.CLAIM_LIFETIME_DAYS;
+    if (value === undefined) delete process.env.CLAIM_LIFETIME_DAYS;
+    else process.env.CLAIM_LIFETIME_DAYS = value;
+    try {
+      return run();
+    } finally {
+      if (before === undefined) delete process.env.CLAIM_LIFETIME_DAYS;
+      else process.env.CLAIM_LIFETIME_DAYS = before;
+    }
+  }
+
+  test('an unset value is a week', () => {
+    assert.equal(withLifetime(undefined, () => env.claimLifetimeDays), 7);
+  });
+
+  test('a value that is not a number is refused, not turned into NaN', () => {
+    // Number('abc') * 86_400_000 is NaN, and new Date(NaN).toISOString() throws
+    // — at signing time, in production, for somebody who has just paid.
+    assert.throws(() => withLifetime('abc', () => env.claimLifetimeDays), /positive number/);
+  });
+
+  test('zero and negative are refused', () => {
+    // These are the dangerous ones: claims born already expired, so every
+    // customer is silently Free and it looks like a working free tier.
+    for (const bad of ['0', '-1']) {
+      assert.throws(() => withLifetime(bad, () => env.claimLifetimeDays), /positive number/);
+    }
+  });
+
+  test('an implausibly long window is refused', () => {
+    // A fat-fingered 3650 is likelier than a deliberate decade, and this number
+    // is also how long a cancelled subscription keeps working.
+    assert.throws(() => withLifetime('3650', () => env.claimLifetimeDays), /grace period/);
+  });
+
+  test('a fortnight is fine', () => {
+    assert.equal(withLifetime('14', () => env.claimLifetimeDays), 14);
   });
 });
