@@ -183,6 +183,25 @@ document this service should be forging.
 Refresh tokens are stored as SHA-256 hashes, so a leaked database is a list of
 hashes rather than a list of working tokens.
 
+## What this costs to run
+
+Google sign-in is free — no fee, no monthly-active-user ceiling for `openid
+email`. The bill is entirely the infrastructure around it, and there is
+deliberately not much of it:
+
+| | |
+| --- | --- |
+| Neon Postgres | Free tier, scales to near zero |
+| Cloud KMS | Cents: a key version plus per-signature charges, and signatures happen about once a day per install |
+| Vercel | Invocations — which is why `GET /v1/entitlement` refreshes daily rather than hourly. The claim is valid for days by design, so an hourly poll buys nothing and multiplies the invoice by twenty-four |
+
+Sign-in codes used to live in Upstash Redis for its TTL. They live in Postgres
+now: expiry is enforced by `expires_at > now()` on every read, so a stale row is
+already unusable and deleting it is housekeeping rather than correctness. That
+removed a vendor, a dependency and two environment variables — and fixed a race,
+because `DELETE ... RETURNING` spends a code in one statement where `get` then
+`del` was two.
+
 ## Tests
 
 ```sh

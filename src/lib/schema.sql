@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Sign-in codes, alive for ten minutes. Expiry is enforced by every read
+-- filtering on `expires_at > now()`, so a row that outlives its window is
+-- already useless; deleting it is housekeeping. The code is hashed for the same
+-- reason refresh tokens are.
+CREATE TABLE IF NOT EXISTS sign_in_codes (
+  code_sha256     TEXT PRIMARY KEY,
+  challenge       TEXT NOT NULL,
+  email           TEXT,
+  expires_at      TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sign_in_codes_expiry ON sign_in_codes(expires_at);
+
 -- Long-lived, per machine. Hashed: a leaked database should not hand anybody a
 -- working token, and the raw value is never needed again after it is issued.
 CREATE TABLE IF NOT EXISTS refresh_tokens (

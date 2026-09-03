@@ -26,13 +26,6 @@ export const env = {
     return required('DATABASE_URL');
   },
 
-  get redis() {
-    return {
-      url: required('UPSTASH_REDIS_REST_URL'),
-      token: required('UPSTASH_REDIS_REST_TOKEN'),
-    };
-  },
-
   get google() {
     return {
       clientId: required('GOOGLE_CLIENT_ID'),
