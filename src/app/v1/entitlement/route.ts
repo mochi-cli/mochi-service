@@ -15,7 +15,7 @@ export const runtime = 'nodejs';
  * however much faster it is.
  *
  * This is also where reconciliation happens — `currentSubscription` re-reads
- * Stripe when the cached row is stale. There is no nightly job; see the README.
+ * Polar when the cached row is stale. There is no nightly job; see the README.
  */
 export async function GET(request: Request) {
   return guarded(async () => {

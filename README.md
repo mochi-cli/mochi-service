@@ -12,10 +12,18 @@ the bug.
 
 ## Why it exists separately
 
-Mochi Table is one process on a loopback port. It cannot receive a Stripe
+Mochi Table is one process on a loopback port. It cannot receive a Polar
 webhook, it cannot own an OAuth redirect URI, and it has to keep working with
 the network unplugged. So everything needing a public address lives here, and
 the app holds only a cached, signed answer.
+
+Money goes through **Polar**, a merchant of record. That is a deliberate choice
+over a payment processor: Polar is the seller, so Polar owes the VAT wherever
+somebody buys from. Digital goods sold to consumers in the EU have no
+small-seller threshold to hide under — the obligation starts at the first euro,
+and it is not one person's evening job to discharge in twenty jurisdictions. It
+also means the seller can be established in a country Stripe does not support,
+which is why this is not Stripe.
 
 Everything about the app is fail-safe to the free tier: a missing file, a bad
 signature, an expired claim, or this service being down all mean Free. An
@@ -42,7 +50,7 @@ openssl pkey -pubout            # the public half goes in the app's key map
 That path is refused in production on purpose. There, set `CLAIM_KMS_KEY`
 instead and let Cloud KMS hold the key — see below.
 
-## The two clients you have to create by hand
+## The three things you have to create by hand
 
 **Google OAuth** — application type **Web application**, not Desktop. Mochi
 never speaks to Google; it opens a browser at a URL this service builds, and
@@ -54,6 +62,18 @@ neither half of what `src/lib/google.ts` does would work.
   `http://localhost:3000/auth/google/callback` for development
 - Authorised JavaScript origins: none — no Google code runs in a browser here
 - Scopes `openid email` are non-sensitive, so there is no Google review to pass
+
+**Polar** — create an organization, then two products (monthly and yearly) and
+copy their ids into `POLAR_PRODUCT_*`. The access token must be an
+*organization* token from Settings, not a personal one; a personal token dies
+with the person who made it. Register a webhook endpoint at
+`$SERVICE_ORIGIN/webhooks/polar` subscribed to the `subscription.*` events, and
+copy its secret into `POLAR_WEBHOOK_SECRET` — that secret comes from the
+endpoint, not from the tokens page.
+
+Build against `POLAR_SERVER=sandbox`, which is a wholly separate instance with
+its own tokens and its own product ids. Pointing production at sandbox does not
+error; it silently makes every paying customer free.
 
 **The signing key** — created in Cloud KMS, where it stays:
 
@@ -91,9 +111,9 @@ the upgrade when someone has an afternoon.
 | `GET /v1/entitlement` | A fresh claim. Also where reconciliation happens. |
 | `DELETE /v1/entitlement` | Signs out one machine. The subscription is untouched. |
 | `POST /v1/usage` | The week's running total of MCP calls. |
-| `POST /v1/checkout` | A Stripe Checkout URL. |
-| `POST /v1/portal` | A Stripe billing portal URL. |
-| `POST /webhooks/stripe` | Stripe's events. Not called by the app. |
+| `POST /v1/checkout` | A Polar Checkout URL. |
+| `POST /v1/portal` | A Polar customer portal URL. `409` on the free plan. |
+| `POST /webhooks/polar` | Polar's events. Not called by the app. |
 
 ## Four things that are load-bearing
 
@@ -109,10 +129,18 @@ other than its own data.
 
 **The webhook verifies against the raw body.** Signing covers the exact bytes,
 and any framework handing you parsed JSON has already destroyed them —
-`request.text()`, never `request.json()`. Handling is idempotent by event id,
-and reconciles from Stripe's current state rather than applying the event's
-delta, so `subscription.updated` arriving before `checkout.completed` is a
-non-event.
+`request.text()`, never `request.json()`. Polar follows the Standard Webhooks
+spec, so the delivery id lives in the `webhook-id` header rather than in the
+body — that header is the idempotency key, and there is nothing inside the
+payload to use instead. Handling reconciles from Polar's current state rather
+than applying the event's delta, so `subscription.updated` arriving before
+`subscription.created` is a non-event.
+
+**There is no customer id column.** Checkout hands Polar our account id as the
+customer's `externalCustomerId`, so Polar creates the customer keyed by it. No
+create-customer round trip, no id to store, no column to drift — and a webhook
+carries the account id inside itself rather than needing a lookup table to
+decode.
 
 **Cloud KMS in production.** On Vercel there is no KMS, so left alone the
 signing key would sit in an environment variable — one crash dump, one
@@ -125,7 +153,7 @@ build, and every signature is logged.
 ## There is no cron
 
 The obvious safety net for a lost webhook is a nightly sweep over every
-subscription. It is the wrong shape. `GET /v1/entitlement` re-reads Stripe when
+subscription. It is the wrong shape. `GET /v1/entitlement` re-reads Polar when
 the cached row is more than a day old, which does work proportional to use
 rather than to the size of the customer table, corrects the record at the one
 moment the answer is used, and is not a scheduled job that can quietly stop
@@ -134,19 +162,21 @@ running while everyone goes on believing there is a safety net.
 Someone who lapses and never opens the app again needs nothing done: their claim
 expires and they fall back to Free. The bounded worst case is one claim lifetime
 of unpaid Pro — the same window the offline grace period hands out deliberately
-— and no money is at risk either way, because Stripe bills the customer, not
+— and no money is at risk either way, because Polar bills the customer, not
 this database.
 
 ## Where the money and the secrets are
 
-Nothing here ever sees a card. Checkout and the billing portal are Stripe's own
-pages; this service stores a customer id and a subscription status.
+Nothing here ever sees a card. Checkout and the customer portal are Polar's own
+pages; this service stores a subscription id and a status. Polar being the
+merchant of record, the invoice the customer receives is Polar's — not a
+document this service should be forging.
 
 | Secret | Lives in |
 | --- | --- |
 | Google client secret | Vercel environment |
-| Stripe secret key | Vercel environment |
-| Stripe webhook signing secret | Vercel environment |
+| Polar organization access token | Vercel environment |
+| Polar webhook signing secret | Vercel environment |
 | Claim signing key | Cloud KMS — generated there, never exported |
 | The app's public key | Shipped in the desktop build. Public, and safe to be. |
 

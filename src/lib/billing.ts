@@ -1,87 +1,82 @@
-import Stripe from 'stripe';
+import { Polar } from '@polar-sh/sdk';
+import type { Subscription as PolarSubscription } from '@polar-sh/sdk/models/components/subscription.js';
 import { env } from './env.ts';
-import {
-  isActive,
-  saveSubscription,
-  setStripeCustomer,
-  subscriptionFor,
-  type Account,
-  type Subscription,
-} from './db.ts';
+import { isActive, saveSubscription, subscriptionFor, type Account, type Subscription } from './db.ts';
 
 /**
- * Stripe, and the rule that Stripe is the source of truth.
+ * Polar, and the rule that Polar is the source of truth.
  *
- * Nothing here ever sees a card. Checkout and the billing portal are Stripe's
- * own pages; this service holds a customer id and a subscription status, which
- * is everything it needs and nothing that would matter if it leaked.
+ * Polar is a merchant of record, which is the whole reason it is here rather
+ * than a payment processor: Polar is the seller, so Polar owes the VAT in every
+ * country somebody buys from. A processor would leave that with us, and digital
+ * goods sold to consumers in the EU have no small-seller threshold to hide
+ * under — the obligation starts at the first euro.
+ *
+ * Nothing here ever sees a card. Checkout and the customer portal are Polar's
+ * own pages; this service holds a subscription id and a status, which is
+ * everything it needs and nothing that would matter if it leaked.
  */
 
-export function stripe(): Stripe {
-  // No apiVersion pin: the installed SDK pins its own, and a hand-written
-  // literal here only ever drifts out of step with the types after an upgrade.
-  return new Stripe(env.stripe.secretKey);
+export function polar(): Polar {
+  return new Polar({ accessToken: env.polar.accessToken, server: env.polar.server });
 }
 
-/** How stale a cached subscription may be before a read re-checks Stripe. */
+/** How stale a cached subscription may be before a read re-checks Polar. */
 const RECONCILE_AFTER_MS = 24 * 60 * 60 * 1000;
 
-async function customerFor(account: Account): Promise<string> {
-  if (account.stripeCustomer) return account.stripeCustomer;
-  const created = await stripe().customers.create({
-    email: account.email,
-    metadata: { accountId: account.id },
-  });
-  await setStripeCustomer(account.id, created.id);
-  return created.id;
+/**
+ * Our account id, handed to Polar as the customer's `externalCustomerId`.
+ *
+ * This is worth more than it looks. Polar will create the customer on first
+ * checkout and key it by this, so there is no create-customer round trip, no
+ * customer id to store, and no column to fall out of sync — and a webhook
+ * arriving for a customer we have never heard of carries the account id in
+ * itself rather than needing a lookup table to decode.
+ */
+function externalId(account: Account): string {
+  return account.id;
 }
 
 export async function checkoutUrl(account: Account, cadence: 'monthly' | 'yearly'): Promise<string> {
-  const session = await stripe().checkout.sessions.create({
-    mode: 'subscription',
-    customer: await customerFor(account),
-    line_items: [
-      {
-        price: cadence === 'yearly' ? env.stripe.priceYearly : env.stripe.priceMonthly,
-        quantity: 1,
-      },
-    ],
-    // Stripe collects the card on its own page, under its own domain. This
+  const checkout = await polar().checkouts.create({
+    products: [cadence === 'yearly' ? env.polar.productYearly : env.polar.productMonthly],
+    externalCustomerId: externalId(account),
+    customerEmail: account.email,
+    // Polar collects the card on its own page, under its own domain. This
     // service never receives a number, and could not store one if it tried.
-    success_url: `${env.origin}/billing/done`,
-    cancel_url: `${env.origin}/billing/cancelled`,
-    client_reference_id: account.id,
+    successUrl: `${env.origin}/billing/done`,
   });
-  if (!session.url) throw new Error('Stripe returned a session with no URL');
-  return session.url;
+  return checkout.url;
 }
 
 export async function portalUrl(account: Account): Promise<string> {
-  const session = await stripe().billingPortal.sessions.create({
-    customer: await customerFor(account),
-    return_url: `${env.origin}/billing/done`,
+  const session = await polar().customerSessions.create({
+    externalCustomerId: externalId(account),
+    returnUrl: `${env.origin}/billing/done`,
   });
-  return session.url;
+  // The token is inside this URL and is what authenticates the portal, so it is
+  // single-use-ish and short-lived by design. Never log it.
+  return session.customerPortalUrl;
 }
 
-/** Writes what Stripe currently says about one subscription. */
+/** Writes what Polar currently says about one subscription. */
 export async function syncSubscription(
   accountId: string,
-  subscription: Stripe.Subscription
+  subscription: PolarSubscription
 ): Promise<void> {
   await saveSubscription({
     accountId,
-    stripeId: subscription.id,
+    polarId: subscription.id,
     status: subscription.status,
-    seats: subscription.items.data[0]?.quantity ?? 1,
-    currentPeriodEnd: subscription.current_period_end
-      ? new Date(subscription.current_period_end * 1000).toISOString()
-      : null,
+    // `seats` is null on everything that is not a seat-based plan, which is
+    // every plan Mochi sells today. One machine, one seat.
+    seats: subscription.seats ?? 1,
+    currentPeriodEnd: subscription.currentPeriodEnd?.toISOString() ?? null,
   });
 }
 
 /**
- * The subscription, re-read from Stripe if what we have is stale.
+ * The subscription, re-read from Polar if what we have is stale.
  *
  * This is the entire safety net for a webhook that never arrived, and it
  * replaces the nightly sweep an earlier design had. It does work proportional
@@ -90,7 +85,7 @@ export async function syncSubscription(
  * it is not a scheduled job that can quietly stop running while everyone goes
  * on believing there is a safety net.
  *
- * A failure to reach Stripe is not fatal: the cached row is served instead.
+ * A failure to reach Polar is not fatal: the cached row is served instead.
  * Being a day out of date is much better than refusing to answer.
  */
 export async function currentSubscription(accountId: string): Promise<Subscription | null> {
@@ -101,16 +96,16 @@ export async function currentSubscription(accountId: string): Promise<Subscripti
   if (Number.isFinite(age) && age < RECONCILE_AFTER_MS) return cached;
 
   try {
-    const fresh = await stripe().subscriptions.retrieve(cached.stripeId);
+    const fresh = await polar().subscriptions.get({ id: cached.polarId });
     await syncSubscription(accountId, fresh);
     return await subscriptionFor(accountId);
   } catch (error) {
-    console.error('[service] could not reconcile subscription', cached.stripeId, error);
+    console.error('[service] could not reconcile subscription', cached.polarId, error);
     return cached;
   }
 }
 
-/** What the claim should say, from whatever Stripe last told us. */
+/** What the claim should say, from whatever Polar last told us. */
 export function planFor(subscription: Subscription | null): { plan: 'free' | 'pro'; seats: number } {
   if (subscription && isActive(subscription.status)) {
     return { plan: 'pro', seats: subscription.seats };

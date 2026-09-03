@@ -40,13 +40,25 @@ export const env = {
     };
   },
 
-  get stripe() {
+  get polar() {
+    const servers = ['production', 'sandbox'] as const;
+    const named = optional('POLAR_SERVER') ?? 'production';
+    const server = servers.find((candidate) => candidate === named);
+    if (!server) {
+      throw new Error(`POLAR_SERVER must be "production" or "sandbox", not "${named}"`);
+    }
     return {
-      secretKey: required('STRIPE_SECRET_KEY'),
-      webhookSecret: required('STRIPE_WEBHOOK_SECRET'),
-      /** The recurring price people are sent to Checkout for. */
-      priceMonthly: required('STRIPE_PRICE_MONTHLY'),
-      priceYearly: required('STRIPE_PRICE_YEARLY'),
+      accessToken: required('POLAR_ACCESS_TOKEN'),
+      webhookSecret: required('POLAR_WEBHOOK_SECRET'),
+      /** Polar sells *products*, not prices — one per billing cadence. */
+      productMonthly: required('POLAR_PRODUCT_MONTHLY'),
+      productYearly: required('POLAR_PRODUCT_YEARLY'),
+      /**
+       * Sandbox is a wholly separate Polar instance with its own tokens and
+       * its own product ids, so this is not a flag to flip casually — pointing
+       * production at sandbox silently makes every paying customer free.
+       */
+      server,
     };
   },
 

@@ -16,34 +16,33 @@ export function sql() {
 export interface Account {
   id: string;
   email: string;
-  stripeCustomer: string | null;
 }
 
 export interface Subscription {
   accountId: string;
-  stripeId: string;
+  polarId: string;
   status: string;
   seats: number;
   currentPeriodEnd: string | null;
   syncedAt: string;
 }
 
-/** Stripe's statuses that mean "this person may use Pro right now". */
+/** Polar's statuses that mean "this person may use Pro right now". */
 export function isActive(status: string): boolean {
-  // `past_due` is deliberately included: the card failed, Stripe is retrying,
+  // `past_due` is deliberately included: the card failed, Polar is retrying,
   // and taking the product away mid-retry punishes someone whose bank declined
   // a payment they intend to make. `unpaid` is where that stops.
+  //
+  // Polar's full set is incomplete, incomplete_expired, trialing, active,
+  // past_due, canceled, unpaid, paused. Everything not listed here is Free,
+  // including `paused` — a paused subscription is one nobody is paying for.
   return status === 'active' || status === 'trialing' || status === 'past_due';
 }
 
 export async function accountByEmail(email: string): Promise<Account | null> {
-  const rows = await sql()`
-    SELECT id, email, stripe_customer FROM accounts WHERE email = ${email}
-  `;
+  const rows = await sql()`SELECT id, email FROM accounts WHERE email = ${email}`;
   const row = rows[0];
-  return row
-    ? { id: row.id as string, email: row.email as string, stripeCustomer: row.stripe_customer as string | null }
-    : null;
+  return row ? { id: row.id as string, email: row.email as string } : null;
 }
 
 export async function upsertAccount(email: string): Promise<Account> {
@@ -51,26 +50,22 @@ export async function upsertAccount(email: string): Promise<Account> {
   const rows = await sql()`
     INSERT INTO accounts (id, email) VALUES (${id}, ${email})
     ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
-    RETURNING id, email, stripe_customer
+    RETURNING id, email
   `;
   const row = rows[0]!;
-  return {
-    id: row.id as string,
-    email: row.email as string,
-    stripeCustomer: row.stripe_customer as string | null,
-  };
+  return { id: row.id as string, email: row.email as string };
 }
 
 export async function subscriptionFor(accountId: string): Promise<Subscription | null> {
   const rows = await sql()`
-    SELECT account_id, stripe_id, status, seats, current_period_end, synced_at
+    SELECT account_id, polar_id, status, seats, current_period_end, synced_at
       FROM subscriptions WHERE account_id = ${accountId}
   `;
   const row = rows[0];
   return row
     ? {
         accountId: row.account_id as string,
-        stripeId: row.stripe_id as string,
+        polarId: row.polar_id as string,
         status: row.status as string,
         seats: Number(row.seats),
         currentPeriodEnd: row.current_period_end as string | null,
@@ -81,17 +76,17 @@ export async function subscriptionFor(accountId: string): Promise<Subscription |
 
 export async function saveSubscription(input: {
   accountId: string;
-  stripeId: string;
+  polarId: string;
   status: string;
   seats: number;
   currentPeriodEnd: string | null;
 }): Promise<void> {
   await sql()`
-    INSERT INTO subscriptions (account_id, stripe_id, status, seats, current_period_end, synced_at)
-    VALUES (${input.accountId}, ${input.stripeId}, ${input.status}, ${input.seats},
+    INSERT INTO subscriptions (account_id, polar_id, status, seats, current_period_end, synced_at)
+    VALUES (${input.accountId}, ${input.polarId}, ${input.status}, ${input.seats},
             ${input.currentPeriodEnd}, now())
     ON CONFLICT (account_id) DO UPDATE SET
-      stripe_id = EXCLUDED.stripe_id,
+      polar_id = EXCLUDED.polar_id,
       status = EXCLUDED.status,
       seats = EXCLUDED.seats,
       current_period_end = EXCLUDED.current_period_end,
@@ -99,11 +94,13 @@ export async function saveSubscription(input: {
   `;
 }
 
-export async function setStripeCustomer(accountId: string, customer: string): Promise<void> {
-  await sql()`UPDATE accounts SET stripe_customer = ${customer} WHERE id = ${accountId}`;
-}
-
-/** True the first time an event id is seen, false every time after. */
+/**
+ * True the first time an event id is seen, false every time after.
+ *
+ * The id comes from the `webhook-id` header rather than the body: Polar follows
+ * the Standard Webhooks spec, where the body carries only a type and a payload
+ * and the delivery's identity lives in the headers.
+ */
 export async function claimEvent(eventId: string): Promise<boolean> {
   const rows = await sql()`
     INSERT INTO handled_events (event_id) VALUES (${eventId})

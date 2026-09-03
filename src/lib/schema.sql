@@ -5,24 +5,25 @@
 -- calls they made. If a change here needs a column for anything from somebody's
 -- tables, the change is wrong.
 
+-- No customer id column. Polar keys customers by `externalCustomerId`, and we
+-- give it this table's `id`, so the mapping is the account id itself — nothing
+-- to store, and nothing that can drift out of sync with Polar.
 CREATE TABLE IF NOT EXISTS accounts (
   id              TEXT PRIMARY KEY,
   email           TEXT NOT NULL UNIQUE,
-  -- Set once Checkout has been through; null for everyone on the free tier.
-  stripe_customer TEXT UNIQUE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (
   account_id      TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-  stripe_id       TEXT NOT NULL UNIQUE,
-  -- Stripe's own vocabulary, stored verbatim rather than mapped on the way in:
+  polar_id        TEXT NOT NULL UNIQUE,
+  -- Polar's own vocabulary, stored verbatim rather than mapped on the way in:
   -- mapping early loses the distinction between "past_due" and "canceled",
   -- which is the difference between chasing a card and letting someone go.
   status          TEXT NOT NULL,
   seats           INTEGER NOT NULL DEFAULT 1,
   current_period_end TIMESTAMPTZ,
-  -- When this row was last confirmed against Stripe. Reconcile-on-read uses
+  -- When this row was last confirmed against Polar. Reconcile-on-read uses
   -- it to decide whether to re-read before signing a claim.
   synced_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -48,8 +49,9 @@ CREATE TABLE IF NOT EXISTS usage (
   PRIMARY KEY (account_id, week)
 );
 
--- Stripe retries, so the same event arrives more than once. Keyed by its id so
--- handling is idempotent: a duplicate must not upgrade twice.
+-- Polar retries, so the same event arrives more than once. Keyed by the
+-- delivery id from the `webhook-id` header so handling is idempotent: a
+-- duplicate must not upgrade twice.
 CREATE TABLE IF NOT EXISTS handled_events (
   event_id        TEXT PRIMARY KEY,
   handled_at      TIMESTAMPTZ NOT NULL DEFAULT now()
