@@ -42,6 +42,45 @@ openssl pkey -pubout            # the public half goes in the app's key map
 That path is refused in production on purpose. There, set `CLAIM_KMS_KEY`
 instead and let Cloud KMS hold the key — see below.
 
+## The two clients you have to create by hand
+
+**Google OAuth** — application type **Web application**, not Desktop. Mochi
+never speaks to Google; it opens a browser at a URL this service builds, and
+the whole exchange happens here. Desktop clients only accept loopback redirect
+URIs and are public clients whose secret Google documents as not secret, so
+neither half of what `src/lib/google.ts` does would work.
+
+- Authorised redirect URI: `$SERVICE_ORIGIN/auth/google/callback`, plus
+  `http://localhost:3000/auth/google/callback` for development
+- Authorised JavaScript origins: none — no Google code runs in a browser here
+- Scopes `openid email` are non-sensitive, so there is no Google review to pass
+
+**The signing key** — created in Cloud KMS, where it stays:
+
+```sh
+gcloud kms keyrings create mochi --location=global
+gcloud kms keys create claim-signing --location=global --keyring=mochi \
+  --purpose=asymmetric-signing --default-algorithm=ec-sign-ed25519
+gcloud kms keys versions list --location=global --keyring=mochi --key=claim-signing
+```
+
+`CLAIM_KMS_KEY` is the full resource name **of a version** — `.../cryptoKeyVersions/1`.
+Naming the key instead of the version is the first mistake everybody makes, and
+the error does not say so.
+
+The public half goes into the desktop build, filed under `CLAIM_KID`:
+
+```sh
+gcloud kms keys versions get-public-key 1 --location=global \
+  --keyring=mochi --key=claim-signing --output-file=claim-2026-09.pub
+```
+
+Then a service account holding `roles/cloudkms.signerVerifier` **on that key
+only**, with its JSON in `GOOGLE_SERVICE_ACCOUNT_JSON`. Vercel has no metadata
+server, so the Google libraries cannot find credentials on their own. Workload
+Identity Federation against Vercel's OIDC token removes even this file, and is
+the upgrade when someone has an afternoon.
+
 ## The endpoints
 
 | Route | What it does |

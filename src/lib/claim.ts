@@ -62,10 +62,31 @@ export function buildClaim(input: {
  */
 async function signWithKms(bytes: Buffer, keyName: string): Promise<Buffer> {
   const { KeyManagementServiceClient } = await import('@google-cloud/kms');
-  const client = new KeyManagementServiceClient();
+  const client = new KeyManagementServiceClient(kmsCredentials());
+
+  // `data`, not `data_crc32c` plus a digest: the key is EC_SIGN_ED25519, which
+  // Cloud KMS documents as "EdDSA on Curve25519 in pure mode (taking data as
+  // input)". Ed25519 hashes internally, so pre-hashing here would sign the
+  // wrong thing and the app would reject every claim.
   const [result] = await client.asymmetricSign({ name: keyName, data: bytes });
   if (!result.signature) throw new Error('KMS returned no signature');
   return Buffer.from(result.signature as Uint8Array);
+}
+
+/**
+ * On Google's own infrastructure the client finds its credentials from the
+ * metadata server. Vercel has no metadata server, so without this the first
+ * signature in production fails with a "Could not load the default
+ * credentials" that looks nothing like a configuration mistake.
+ */
+function kmsCredentials(): { credentials: Record<string, unknown> } | undefined {
+  const json = env.signing.serviceAccount;
+  if (!json) return undefined;
+  try {
+    return { credentials: JSON.parse(json) as Record<string, unknown> };
+  } catch {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON');
+  }
 }
 
 /**

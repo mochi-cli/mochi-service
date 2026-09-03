@@ -63,6 +63,19 @@ export const env = {
       kid: required('CLAIM_KID'),
       kmsKey: optional('CLAIM_KMS_KEY'),
       localKey: optional('CLAIM_SIGNING_KEY'),
+      /**
+       * Credentials for reaching KMS. The Google libraries normally find these
+       * by themselves, but only on Google's own infrastructure, where there is
+       * a metadata server to ask. On Vercel there is not, so the service
+       * account travels as JSON in an environment variable.
+       *
+       * This is not the thing the KMS argument was avoiding. What leaks here is
+       * permission to *ask that one key for signatures* until it is revoked —
+       * scoped to roles/cloudkms.signerVerifier on a single key, revocable in a
+       * click, and it breaks no installed build. The private key itself still
+       * cannot be carried away.
+       */
+      serviceAccount: optional('GOOGLE_SERVICE_ACCOUNT_JSON'),
     };
   },
 
