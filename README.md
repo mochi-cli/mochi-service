@@ -111,6 +111,7 @@ the upgrade when someone has an afternoon.
 | `GET /v1/entitlement` | A fresh claim. Also where reconciliation happens. |
 | `DELETE /v1/entitlement` | Signs out one machine. The subscription is untouched. |
 | `POST /v1/usage` | The week's running total of MCP calls. |
+| `GET /v1/plans` | What Pro costs, read from Polar. No authentication — it is a price list. |
 | `POST /v1/checkout` | A Polar Checkout URL. |
 | `POST /v1/portal` | A Polar customer portal URL. `409` on the free plan. |
 | `POST /webhooks/polar` | Polar's events. Not called by the app. |
