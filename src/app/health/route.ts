@@ -62,7 +62,28 @@ export async function GET() {
       ? 'local'
       : 'none';
 
+  /**
+   * Exactly which names are absent from this build's environment.
+   *
+   * The grouped booleans below say *something* is wrong with Google or the
+   * origin; they do not say whether a name was misspelled, scoped to Preview
+   * only, or set on a different project. Every one of these names is already
+   * in the public repository, so listing them costs nothing and ends the
+   * guessing.
+   */
+  const missingEnv = [
+    'SERVICE_ORIGIN',
+    'DATABASE_URL',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'POLAR_ACCESS_TOKEN',
+    'POLAR_PRODUCT_MONTHLY',
+    'POLAR_PRODUCT_YEARLY',
+    'CLAIM_KID',
+  ].filter((name) => !process.env[name]?.trim());
+
   const checks = {
+    missingEnv,
     /**
      * Which build is answering, so "did my redeploy land?" is a question with
      * an answer. Without it, a variable that was set correctly and a variable
