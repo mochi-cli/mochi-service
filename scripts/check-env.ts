@@ -53,7 +53,15 @@ for (const [name, read] of checks) {
 // Signing is the one with two valid shapes, so it cannot be a plain presence
 // check: exactly one of the two must be set, and which one depends on where
 // this is running.
-const { kmsKey, localKey, serviceAccount } = env.signing;
+// Guarded, because reading `env.signing` demands CLAIM_KID — and a script whose
+// job is listing what is missing must not die on the first missing thing.
+let signing: Partial<typeof env.signing> = {};
+try {
+  signing = env.signing;
+} catch {
+  // Already reported above as a missing CLAIM_KID; nothing to add here.
+}
+const { kmsKey, localKey, serviceAccount } = signing;
 if (kmsKey) {
   console.log('  ok      CLAIM_KMS_KEY — signing through Cloud KMS');
   if (!serviceAccount) {
