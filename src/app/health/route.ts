@@ -19,10 +19,29 @@ export const dynamic = 'force-dynamic';
  * connection likes to quote the URL it tried, credentials included.
  */
 export async function GET() {
+  // Connecting is not the question — `SELECT 1` passes against an empty
+  // database, and an empty database is exactly what you have after setting
+  // DATABASE_URL and forgetting to run schema.sql. That combination produces a
+  // 500 on the first real request and a health check that says everything is
+  // fine, which is worse than no health check.
+  const EXPECTED = [
+    'accounts',
+    'subscriptions',
+    'sign_in_codes',
+    'refresh_tokens',
+    'usage',
+    'handled_events',
+  ];
+
   let database = false;
+  let missingTables: string[] = EXPECTED;
   try {
-    await sql()`SELECT 1`;
+    const rows = await sql()`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+    `;
     database = true;
+    const present = new Set(rows.map((row) => row.table_name as string));
+    missingTables = EXPECTED.filter((name) => !present.has(name));
   } catch {
     // Deliberately swallowed: see above. The boolean is the whole answer.
   }
@@ -45,6 +64,8 @@ export async function GET() {
 
   const checks = {
     database,
+    /** Empty when schema.sql has been applied. Anything here is a 500 waiting. */
+    missingTables,
     origin: has(() => env.origin),
     google: has(() => env.google.clientId) && has(() => env.google.clientSecret),
     polar:
@@ -63,6 +84,7 @@ export async function GET() {
   // so it is reported but does not make the deployment unhealthy.
   const ready =
     checks.database &&
+    checks.missingTables.length === 0 &&
     checks.origin &&
     checks.google &&
     checks.polar &&
