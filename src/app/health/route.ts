@@ -35,6 +35,19 @@ export async function GET() {
 
   let database = false;
   let missingTables: string[] = EXPECTED;
+  /**
+   * How many webhook deliveries have ever been handled.
+   *
+   * Zero is the number worth watching. A webhook endpoint registered without
+   * its path, or with the wrong secret, fails on Polar's side and succeeds at
+   * looking fine from here — every other check passes, and the only symptom is
+   * that subscription changes arrive a day late instead of at once. That
+   * happened, and it took reading a delivery log in another product to find.
+   *
+   * A count is not data. It says the pipe has carried something, which is the
+   * one thing nothing else here can tell you.
+   */
+  let webhooksHandled: number | null = null;
   try {
     const rows = await sql()`
       SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
@@ -42,6 +55,10 @@ export async function GET() {
     database = true;
     const present = new Set(rows.map((row) => row.table_name as string));
     missingTables = EXPECTED.filter((name) => !present.has(name));
+    if (present.has('handled_events')) {
+      const counted = await sql()`SELECT count(*)::int AS n FROM handled_events`;
+      webhooksHandled = (counted[0]?.n as number | undefined) ?? 0;
+    }
   } catch {
     // Deliberately swallowed: see above. The boolean is the whole answer.
   }
@@ -96,6 +113,8 @@ export async function GET() {
     database,
     /** Empty when schema.sql has been applied. Anything here is a 500 waiting. */
     missingTables,
+    /** Zero means no webhook has ever been delivered successfully. */
+    webhooksHandled,
     origin: has(() => env.origin),
     google: has(() => env.google.clientId) && has(() => env.google.clientSecret),
     polar:
