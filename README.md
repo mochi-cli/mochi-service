@@ -35,7 +35,7 @@ costs anybody their data, and it never stops the app opening.
 ```sh
 npm install
 cp .env.example .env.local     # then fill it in
-npm run db:schema              # applies src/lib/schema.sql
+npm run db:schema              # applies src/lib/schema.sql (needs DATABASE_URL)
 npm run dev
 ```
 

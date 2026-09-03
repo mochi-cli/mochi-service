@@ -10,7 +10,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "db:schema": "psql \"$DATABASE_URL\" -f src/lib/schema.sql",
+    "db:schema": "node --env-file-if-exists=.env.local scripts/apply-schema.ts",
     "check:key": "node --env-file-if-exists=.env.local scripts/check-signing-key.ts",
     "check:env": "node --env-file-if-exists=.env.local scripts/check-env.ts"
   },
