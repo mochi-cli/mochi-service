@@ -63,6 +63,15 @@ export async function GET() {
       : 'none';
 
   const checks = {
+    /**
+     * Which build is answering, so "did my redeploy land?" is a question with
+     * an answer. Without it, a variable that was set correctly and a variable
+     * that was never picked up look identical from outside, and the only way
+     * to tell them apart is to guess. The repository is public; the commit is
+     * not a secret.
+     */
+    deployedCommit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+    environment: process.env.VERCEL_ENV ?? null,
     database,
     /** Empty when schema.sql has been applied. Anything here is a 500 waiting. */
     missingTables,
