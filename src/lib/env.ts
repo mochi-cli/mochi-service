@@ -42,7 +42,22 @@ export const env = {
     }
     return {
       accessToken: required('POLAR_ACCESS_TOKEN'),
-      webhookSecret: required('POLAR_WEBHOOK_SECRET'),
+      /**
+       * A getter, so it is demanded only where it is used.
+       *
+       * Registering the webhook needs a public URL, which does not exist until
+       * the service is deployed — so there is a real window where everything
+       * else is configured and this is not. Reading it eagerly would take
+       * checkout down for the sake of an endpoint nobody is calling yet, and
+       * the service is correct without webhooks anyway: they make the
+       * subscription record fast, reconcile-on-read is what makes it right.
+       *
+       * The webhook route still refuses every delivery until this is set,
+       * which is the only safe way to be unconfigured.
+       */
+      get webhookSecret() {
+        return required('POLAR_WEBHOOK_SECRET');
+      },
       /** Polar sells *products*, not prices — one per billing cadence. */
       productMonthly: required('POLAR_PRODUCT_MONTHLY'),
       productYearly: required('POLAR_PRODUCT_YEARLY'),
