@@ -141,6 +141,34 @@ export async function currentSubscription(accountId: string): Promise<Subscripti
   }
 }
 
+/**
+ * Cancels at the end of the period somebody has already paid for.
+ *
+ * Not immediately, and that is the whole design. Somebody who cancels on the
+ * second of the month has paid for the month; ending it there would be taking
+ * money for nothing, and every product that does it is remembered for it. They
+ * keep Pro until the period runs out and then become a free user with all
+ * their data — which is what the plan comparison promises, so it had better be
+ * what happens.
+ *
+ * The record is re-read from Polar afterwards rather than patched here, for
+ * the same reason the webhook re-reads: the answer to "what is this
+ * subscription now" belongs to Polar.
+ */
+export async function cancelSubscription(accountId: string): Promise<Subscription | null> {
+  const cached = await subscriptionFor(accountId);
+  // Null rather than a throw: the caller turns it into the 404, and a store
+  // with nothing to cancel is an ordinary answer rather than a fault.
+  if (!cached) return null;
+
+  const updated = await polar().subscriptions.update({
+    id: cached.polarId,
+    subscriptionUpdate: { cancelAtPeriodEnd: true },
+  });
+  await syncSubscription(accountId, updated);
+  return await subscriptionFor(accountId);
+}
+
 /** What the claim should say, from whatever Polar last told us. */
 export function planFor(subscription: Subscription | null): { plan: 'free' | 'pro'; seats: number } {
   if (subscription && isActive(subscription.status)) {
