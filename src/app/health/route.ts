@@ -31,6 +31,7 @@ export async function GET() {
     'refresh_tokens',
     'usage',
     'handled_events',
+    'feedback',
   ];
 
   let database = false;

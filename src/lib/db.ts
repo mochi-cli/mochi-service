@@ -120,3 +120,35 @@ export async function recordUsage(accountId: string, week: string, calls: number
       updated_at = now()
   `;
 }
+
+/** How long a Pro account must wait between messages. */
+const FEEDBACK_EVERY_MS = 60_000;
+
+/**
+ * Stores one piece of feedback, unless the same account just sent one.
+ *
+ * Rate-limited in the same statement that inserts, rather than by reading
+ * first and writing second: two windows open at once would both read "nothing
+ * recent" and both write. Returns false when it was too soon, which the route
+ * turns into a sentence rather than an error.
+ */
+export async function saveFeedback(input: {
+  accountId: string;
+  plan: string;
+  appVersion: string | null;
+  platform: string | null;
+  message: string;
+}): Promise<boolean> {
+  const id = `fb_${crypto.randomUUID()}`;
+  const rows = await sql()`
+    INSERT INTO feedback (id, account_id, plan, app_version, platform, message)
+    SELECT ${id}, ${input.accountId}, ${input.plan}, ${input.appVersion}, ${input.platform}, ${input.message}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM feedback
+       WHERE account_id = ${input.accountId}
+         AND created_at > now() - ${`${FEEDBACK_EVERY_MS} milliseconds`}::interval
+    )
+    RETURNING id
+  `;
+  return rows.length > 0;
+}

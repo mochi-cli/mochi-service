@@ -68,3 +68,24 @@ CREATE TABLE IF NOT EXISTS handled_events (
   event_id        TEXT PRIMARY KEY,
   handled_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- What a paying customer typed into the feedback box, and nothing else.
+--
+-- Note what is absent, the same way it is absent everywhere above: no
+-- workspace name, no table name, no cell. The only free text here is what the
+-- person wrote themselves, knowing it was being sent. `plan` and `app_version`
+-- are kept because "this is broken" is unanswerable without knowing which
+-- build said it.
+CREATE TABLE IF NOT EXISTS feedback (
+  id              TEXT PRIMARY KEY,
+  account_id      TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  -- The plan at the moment of writing. A complaint from somebody who has since
+  -- cancelled still came from a Pro customer, and joining to the live
+  -- subscription later would quietly rewrite that.
+  plan            TEXT NOT NULL,
+  app_version     TEXT,
+  platform        TEXT,
+  message         TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_account ON feedback(account_id, created_at DESC);
